@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Weltraumschrott – Bedrohung aus dem Orbit</title>
+
+<!-- Fonts: Big Shoulders Display (Titel/Zahlen), IBM Plex Mono (Telemetrie-Labels), Hanken Grotesk (Fließtext) -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@500;700;800;900&family=Hanken+Grotesk:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<style>
+/* ===========================================
+   THEME – hier Farben und Schriften ändern
+   Look: Mission Control / Orbit-Radar
+   =========================================== */
+:root {
+    --bg: #04070c;
+    --ink: #e9f1f5;
+    --dim: #93a3ae;
+    --line: rgba(190, 215, 230, 0.18);
+    --signal: #ff6a2b;          /* Gefahr / Schrott */
+    --signal-soft: rgba(255, 106, 43, 0.16);
+    --track: #6fd6e6;           /* verfolgt / Orbit */
+
+    --font-display: 'Big Shoulders Display', 'DejaVu Sans Condensed', 'Arial Narrow', sans-serif;
+    --font-body: 'Hanken Grotesk', 'Inter', 'Helvetica Neue', sans-serif;
+    --font-mono: 'IBM Plex Mono', 'DejaVu Sans Mono', monospace;
+
+    --ease: cubic-bezier(0.16, 1, 0.3, 1);
+    --stage-bg: #04070c;
+    --slide-bg: transparent;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+/* ===========================================
+   FIXED 16:9 STAGE (viewport-base.css, vollständig)
+   =========================================== */
+html,
+body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+    background: var(--stage-bg, #000);
+}
+.deck-viewport {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+    background: var(--stage-bg, #000);
+}
+.deck-stage {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    transform-origin: 0 0;
+    background: var(--slide-bg, #fff);
+}
+.slide {
+    position: absolute;
+    inset: 0;
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    display: block;
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
+    background: var(--slide-bg, #fff);
+}
+.slide.active,
+.slide.visible {
+    visibility: visible;
+    opacity: 1;
+    pointer-events: auto;
+    z-index: 1;
+}
+img, video, canvas, svg { max-width: 100%; max-height: 100%; }
+.deck-controls {
+    position: fixed;
+    left: 50%;
+    bottom: 22px;
+    transform: translateX(-50%);
+    z-index: 1000;
+}
+@media print {
+    html, body { width: 1920px; height: auto; overflow: visible; background: #fff; }
+    .deck-viewport { position: static; overflow: visible; background: #fff; }
+    .deck-stage { position: static; width: auto; height: auto; transform: none !important; background: none; }
+    .slide {
+        position: relative; display: block !important; visibility: visible !important;
+        opacity: 1 !important; pointer-events: auto !important;
+        width: 1920px; height: 1080px; break-after: page; page-break-after: always;
+    }
+    .slide:last-child { break-after: auto; page-break-after: auto; }
+    .deck-controls { display: none !important; }
+}
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.2s !important; }
+}
+
+/* ===========================================
+   SLIDE-WECHSEL (Überblendung)
+   =========================================== */
+.slide { transition: opacity 0.7s ease, visibility 0s linear 0.7s; padding: 150px 140px 120px; color: var(--ink); font-family: var(--font-body); }
+.slide.active, .slide.visible { transition: opacity 0.7s ease, visibility 0s; }
+
+/* ===========================================
+   HINTERGRUND-CANVAS + HUD
+   =========================================== */
+#orbit { position: absolute; inset: 0; width: 1920px; height: 1080px; z-index: 0; }
+.vignette {
+    position: absolute; inset: 0; z-index: 0; pointer-events: none;
+    background:
+        radial-gradient(ellipse at 50% 38%, transparent 40%, rgba(2,4,8,0.75) 100%),
+        linear-gradient(90deg, rgba(4,7,12,0.55) 0%, transparent 38%);
+}
+.hud { position: absolute; inset: 0; z-index: 5; pointer-events: none; font-family: var(--font-mono); font-size: 20px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--dim); }
+.hud .tl { position: absolute; left: 140px; top: 62px; display: flex; gap: 28px; align-items: center; }
+.hud .tl b { color: var(--ink); font-weight: 500; }
+.hud .tl i { font-style: normal; color: var(--signal); transition: opacity .4s; }
+.hud .tr { position: absolute; right: 140px; top: 62px; }
+.hud .bl { position: absolute; left: 140px; bottom: 52px; }
+.hud .bl em { font-style: normal; color: var(--ink); }
+.hud .prog { position: absolute; left: 0; bottom: 0; height: 3px; width: 100%; background: transparent; }
+.hud .prog span { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--track), var(--signal)); transition: width .8s var(--ease); }
+/* Eckmarken */
+.hud .tick { position: absolute; width: 28px; height: 28px; border: 0 solid var(--line); }
+.hud .t1 { left: 60px; top: 50px; border-width: 2px 0 0 2px; }
+.hud .t2 { right: 60px; top: 50px; border-width: 2px 2px 0 0; }
+.hud .t3 { left: 60px; bottom: 40px; border-width: 0 0 2px 2px; }
+.hud .t4 { right: 60px; bottom: 40px; border-width: 0 2px 2px 0; }
+
+/* ===========================================
+   REVEAL-ANIMATIONEN (gestaffelt über --d)
+   =========================================== */
+.rv { opacity: 0; transform: translateY(38px); filter: blur(8px);
+      transition: opacity .9s var(--ease), transform .9s var(--ease), filter .9s var(--ease); }
+.slide.visible .rv { opacity: 1; transform: none; filter: none; transition-delay: calc(var(--d, 0) * 0.13s + 0.25s); }
+.rule { height: 2px; background: var(--line); position: relative; transform: scaleX(0); transform-origin: left; transition: transform 1.1s var(--ease); }
+.rule::after { content: ""; position: absolute; left: 0; top: 0; height: 2px; width: 72px; background: var(--signal); }
+.slide.visible .rule { transform: scaleX(1); transition-delay: calc(var(--d, 0) * 0.13s + 0.2s); }
+
+/* ===========================================
+   TYPOGRAFIE
+   =========================================== */
+.eyebrow { font-family: var(--font-mono); font-size: 24px; letter-spacing: 0.24em; text-transform: uppercase; color: var(--signal); display: flex; align-items: center; gap: 22px; margin-bottom: 34px; }
+.eyebrow::before { content: ""; width: 56px; height: 2px; background: var(--signal); }
+.h2 { font-family: var(--font-display); font-weight: 800; font-size: 104px; line-height: 0.98; letter-spacing: 0.005em; max-width: 1560px; text-wrap: balance; }
+.h2.m { font-size: 86px; max-width: 1500px; }
+.h2.s { font-size: 76px; max-width: 1500px; }
+.lead { font-size: 36px; line-height: 1.38; color: var(--dim); max-width: 1260px; margin-top: 34px; font-weight: 400; }
+.lbl { hyphens: auto; font-family: var(--font-display); font-weight: 700; font-size: 50px; line-height: 1.05; letter-spacing: 0.01em; }
+.txt { font-size: 29px; line-height: 1.42; color: var(--dim); margin-top: 14px; }
+.txt b, .lead b { color: var(--ink); font-weight: 500; }
+.mono { font-family: var(--font-mono); font-size: 22px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim); }
+.mono em { font-style: normal; color: var(--signal); }
+.num { font-family: var(--font-display); font-weight: 900; line-height: 0.9; white-space: nowrap; display: block; letter-spacing: 0.005em; font-variant-numeric: tabular-nums; }
+.hot { color: var(--signal); }
+.cy { color: var(--track); }
+.col { border-top: 2px solid var(--line); padding-top: 34px; position: relative; display: flex; flex-direction: column; }
+.col::before { content: ""; position: absolute; left: 0; top: -2px; width: 72px; height: 2px; background: var(--signal); }
+
+/* ===========================================
+   FOLIE 1 – TITEL
+   =========================================== */
+.s-title { padding-top: 0; }
+.s-title .block { position: absolute; left: 140px; top: 250px; width: 1640px; }
+.s-title .block { padding: 0; }
+.s-title h1 { font-family: var(--font-display); font-weight: 900; font-size: 212px; line-height: 0.9; text-transform: uppercase; letter-spacing: 0.14em; white-space: nowrap;
+    clip-path: inset(0 0 100% 0); transition: clip-path 1.3s var(--ease), letter-spacing 2.6s var(--ease); }
+.s-title.visible h1 { clip-path: inset(-5% 0 -5% 0); letter-spacing: 0.012em; transition-delay: .3s, .3s; }
+.s-title .sub { font-size: 48px; line-height: 1.25; color: var(--ink); margin-top: 38px; max-width: 1100px; font-weight: 400; }
+.s-title .meta { position: absolute; left: 140px; bottom: 120px; display: flex; gap: 60px; }
+
+/* ===========================================
+   FOLIE 2 – INHALT
+   =========================================== */
+.toc { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 56px; margin-top: 90px; }
+.toc .n { font-family: var(--font-display); font-weight: 900; font-size: 240px; line-height: .85; color: transparent; -webkit-text-stroke: 2px rgba(233,241,245,.55); margin-bottom: 36px; }
+.toc .lbl { font-size: 52px; }
+
+/* ===========================================
+   LAYOUT-BAUSTEINE
+   =========================================== */
+.cols { display: grid; gap: 56px; }
+.cols > *, .toc > * { min-width: 0; }
+.cols.c4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.cols.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.cols.c2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.pin-bottom { position: absolute; left: 140px; right: 140px; bottom: 120px; }
+
+/* Folie 5 – Balken */
+.bars { margin-top: 34px; }
+.bar-h { font-family: var(--font-mono); font-size: 20px; letter-spacing: .2em; text-transform: uppercase; color: var(--dim); margin-bottom: 18px; }
+.bar-row { display: grid; grid-template-columns: 360px minmax(0, 1fr) 430px; align-items: center; gap: 36px; padding: 12px 0; border-top: 1px solid var(--line); }
+.bar-row .lbl { font-size: 42px; white-space: nowrap; }
+.track { height: 30px; background: rgba(190,215,230,.07); position: relative; overflow: hidden; }
+.track i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; transition: width 1.8s var(--ease); background: var(--signal); box-shadow: 0 0 30px rgba(255,106,43,.45); }
+.track i.cyan { background: var(--track); box-shadow: 0 0 30px rgba(111,214,230,.4); }
+.slide.visible .track i { width: var(--w); transition-delay: calc(var(--d, 0) * 0.2s + .7s); }
+.bar-row .val { font-family: var(--font-display); font-weight: 800; font-size: 62px; line-height: 1; white-space: nowrap; }
+.bar-row .val small { display: block; font-family: var(--font-body); font-weight: 400; font-size: 23px; color: var(--dim); margin-top: 6px; white-space: normal; line-height: 1.25; }
+.footnote { font-family: var(--font-mono); font-size: 20px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); margin-top: 14px; }
+
+/* Folie 8 – Kette */
+.chain { display: grid; grid-template-columns: minmax(0,1fr) 64px minmax(0,1fr) 64px minmax(0,1fr) 64px minmax(0,1fr); align-items: stretch; margin-top: 70px; }
+.chain .node { border: 2px solid var(--line); padding: 38px 26px 40px; min-height: 330px; display: flex; flex-direction: column; justify-content: space-between; background: rgba(4,7,12,.55); position: relative; }
+.chain .node .i { font-family: var(--font-mono); font-size: 22px; letter-spacing: .2em; color: var(--dim); }
+.chain .node .lbl { font-size: 50px; hyphens: auto; overflow-wrap: anywhere; }
+.chain .node.hit { border-color: var(--signal); background: var(--signal-soft); }
+.chain .node.hit .i { color: var(--signal); }
+.chain .arr { display: flex; align-items: center; justify-content: center; }
+.chain .arr svg { width: 54px; height: 24px; overflow: visible; }
+.chain .arr path { stroke: var(--signal); stroke-width: 3; fill: none; stroke-dasharray: 8 8; animation: dash 1.1s linear infinite; }
+@keyframes dash { to { stroke-dashoffset: -32; } }
+
+/* Folie 10 – Höhendiagramm */
+.s10 .left { width: 1020px; }
+.alt { position: absolute; right: 200px; top: 170px; width: 640px; height: 760px; }
+.alt .cap { position: absolute; left: 0; top: 0; font-family: var(--font-mono); font-size: 20px; letter-spacing: .18em; text-transform: uppercase; color: var(--dim); }
+.alt .axis { position: absolute; left: 150px; top: 70px; width: 2px; height: 640px; background: var(--line); }
+.alt .tk { position: absolute; left: 0; width: 150px; text-align: right; padding-right: 26px; font-family: var(--font-mono); font-size: 22px; color: var(--dim); transform: translateY(-50%); }
+.alt .tk::after { content: ""; position: absolute; right: -2px; top: 50%; width: 14px; height: 2px; background: var(--line); }
+.alt .band { position: absolute; left: 152px; right: 0; top: 230px; height: 160px; background: linear-gradient(90deg, rgba(255,106,43,.55), rgba(255,106,43,.12)); border-top: 2px solid var(--signal); border-bottom: 2px solid var(--signal); display: flex; flex-direction: column; justify-content: center; padding-left: 34px; transform: scaleX(0); transform-origin: left; transition: transform 1.2s var(--ease); }
+.slide.visible .alt .band { transform: scaleX(1); transition-delay: 1s; }
+.alt .band b { font-family: var(--font-display); font-weight: 800; font-size: 54px; line-height: 1; }
+.alt .band span { font-family: var(--font-mono); font-size: 21px; letter-spacing: .12em; text-transform: uppercase; color: #ffd5c2; margin-top: 8px; }
+.alt .ln { position: absolute; left: 152px; right: 0; top: 590px; height: 0; border-top: 2px dashed var(--track); transform: scaleX(0); transform-origin: left; transition: transform 1.2s var(--ease); }
+.slide.visible .alt .ln { transform: scaleX(1); transition-delay: 1.5s; }
+.alt .lnl { position: absolute; left: 186px; top: 604px; font-family: var(--font-mono); font-size: 21px; letter-spacing: .12em; color: var(--track); text-transform: uppercase; }
+
+/* Folie 11 – Kessler */
+.kessler { font-family: var(--font-display); font-weight: 900; font-size: 180px; line-height: .9; text-transform: uppercase; white-space: nowrap; }
+.big-txt { font-size: 44px; line-height: 1.3; max-width: 1400px; margin-top: 34px; }
+
+/* Folie 12 – Intensitäts-Meter */
+.meter { height: 12px; background: rgba(190,215,230,.1); margin-top: auto; flex: none; position: relative; overflow: hidden; }
+.meter i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: linear-gradient(90deg, rgba(255,106,43,.25), var(--signal)); transition: width 1.6s var(--ease); }
+.slide.visible .meter i { width: var(--w); transition-delay: calc(var(--d, 0) * 0.13s + 0.9s); }
+
+/* ===========================================
+   BEARBEITUNGSMODUS (E drücken oder Ecke oben links)
+   =========================================== */
+.edit-hotzone { position: fixed; top: 0; left: 0; width: 80px; height: 80px; z-index: 10000; }
+.edit-toggle { position: fixed; top: 14px; left: 14px; z-index: 10001; opacity: 0; pointer-events: none; transition: opacity .3s;
+    font: 500 12px var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink); background: rgba(4,7,12,.85); border: 1px solid var(--line); padding: 8px 12px; cursor: pointer; }
+.edit-toggle.show, .edit-toggle.active { opacity: 1; pointer-events: auto; }
+.edit-toggle.active { border-color: var(--signal); color: var(--signal); }
+body.editing [contenteditable="true"] { outline: 1px dashed rgba(111,214,230,.45); outline-offset: 6px; cursor: text; }
+body.editing [contenteditable="true"]:focus { outline: 2px solid var(--track); }
+
+/* ===========================================
+   STEUERUNG (außerhalb der Bühne)
+   =========================================== */
+.deck-controls { display: flex; gap: 10px; opacity: .0; transition: opacity .3s; }
+body:hover .deck-controls { opacity: .85; }
+.deck-controls button { width: 44px; height: 44px; border-radius: 50%; border: 1px solid rgba(190,215,230,.3); background: rgba(4,7,12,.7); color: #e9f1f5; font-size: 18px; cursor: pointer; }
+.deck-controls button:hover { border-color: #ff6a2b; color: #ff6a2b; }
+</style>
+</head>
+<body>
+<div class="deck-viewport">
+<main class="deck-stage" id="deckStage">
+
+    <!-- === HINTERGRUND: Erdhorizont + kreisende Objekte (Canvas) === -->
+    <canvas id="orbit" aria-hidden="true"></canvas>
+    <div class="vignette"></div>
+
+    <!-- === HUD: Kapitel, Zähler, Fortschritt === -->
+    <div class="hud" aria-hidden="true">
+        <span class="tick t1"></span><span class="tick t2"></span><span class="tick t3"></span><span class="tick t4"></span>
+        <div class="tl"><b>Weltraumschrott</b><i id="hudSec"></i></div>
+        <div class="tr">Erdorbit · LEO</div>
+        <div class="bl"><em id="hudCur">01</em> / <span id="hudTot">18</span></div>
+        <div class="prog"><span id="hudProg"></span></div>
+    </div>
+
+    <!-- === 01 TITEL === -->
+    <section class="slide s-title active" data-sec="" data-limb="270" data-dens="190" aria-label="Titel">
+        <div class="block">
+            <div class="eyebrow rv" style="--d:0">Erdorbit · LEO</div>
+            <h1 data-fit="212">Weltraumschrott</h1>
+            <p class="sub rv" style="--d:5">Wie Müll im Orbit entsteht – und warum er zur Gefahr wird</p>
+        </div>
+        <div class="meta rv" style="--d:7"><span class="mono">17. November 2026</span></div>
+    </section>
+
+    <!-- === 02 INHALT === -->
+    <section class="slide" data-sec="Inhalt" data-limb="90" data-dens="90">
+        <div class="eyebrow rv" style="--d:0">Inhalt</div>
+        <div class="toc">
+            <div class="col rv" style="--d:1"><div class="n">01</div><div class="lbl">Definition &amp; Ausmaß</div><p class="txt">Was zählt, wie viel kreist</p></div>
+            <div class="col rv" style="--d:2"><div class="n">02</div><div class="lbl">Entstehung &amp; Kaskade</div><p class="txt">Wie Schrott entsteht, wie er sich vermehrt</p></div>
+            <div class="col rv" style="--d:3"><div class="n">03</div><div class="lbl">Gefahren im Orbit</div><p class="txt">Aufprall, Ausfälle, Ausweichmanöver</p></div>
+            <div class="col rv" style="--d:4"><div class="n">04</div><div class="lbl">Gegenmaßnahmen</div><p class="txt">Vermeiden, überwachen, bergen</p></div>
+        </div>
+    </section>
+
+    <!-- === 03 DEFINITION === -->
+    <section class="slide" data-sec="01 · Definition &amp; Ausmaß" data-limb="100" data-dens="110">
+        <div class="eyebrow rv" style="--d:0">Definition</div>
+        <h2 class="h2 rv" style="--d:1">Als Weltraumschrott zählt alles, was nicht mehr gesteuert wird</h2>
+        <p class="lead rv" style="--d:3">Nicht mehr funktionsfähige, von Menschen geschaffene Objekte und Bruchstücke in Erdumlaufbahnen – von ausgedienten Satelliten bis zu Lacksplittern</p>
+        <div class="pin-bottom rv" style="--d:5"><span class="mono"><em>Abgrenzung:</em> Natürliche Objekte wie Meteoroiden zählen nicht zum Weltraumschrott.</span></div>
+    </section>
+
+    <!-- === 04 ZUSAMMENSETZUNG === -->
+    <section class="slide" data-sec="01 · Definition &amp; Ausmaß" data-limb="90" data-dens="130">
+        <div class="eyebrow rv" style="--d:0">Objektarten im Katalog</div>
+        <div class="cols c4" style="margin-top:110px">
+            <div class="col rv" style="--d:1"><span class="num hot" data-fit="128" style="font-size:128px" data-count="34.8" data-dec="1" data-suf=" %">34,8 %</span><div class="lbl" style="margin-top:40px">Nutzlasten</div><p class="txt">Aktive und defekte Satelliten – davon nur etwa 11.000 aktive Satelliten</p></div>
+            <div class="col rv" style="--d:2"><span class="num" data-fit="128" style="font-size:128px" data-count="2500" data-pre="~">~2.500</span><div class="lbl" style="margin-top:40px">Raketenoberstufen</div><p class="txt">Verbrauchte Stufen und Strukturen</p></div>
+            <div class="col rv" style="--d:3"><span class="num" data-fit="128" style="font-size:128px" data-count="20" data-pre="~" data-suf=" %">~20 %</span><div class="lbl" style="margin-top:40px">Trümmerteile</div><p class="txt">Splitter aus Explosionen und Kollisionen, also aus Fragmentierungen</p></div>
+            <div class="col rv" style="--d:4"><span class="num" data-fit="128" style="font-size:128px" data-count="20.3" data-dec="1" data-suf=" %">20,3 %</span><div class="lbl" style="margin-top:40px">Nicht zugeordnet</div><p class="txt">Herkunft ungeklärt – Anteil am Katalog</p></div>
+        </div>
+    </section>
+
+    <!-- === 05 GRÖSSENKLASSEN === -->
+    <section class="slide" data-sec="01 · Definition &amp; Ausmaß" data-limb="80" data-dens="260">
+        <h2 class="h2 m rv" style="--d:0">Rund 40.000 Objekte werden verfolgt – die Mehrheit bleibt unsichtbar</h2>
+        <p class="lead rv" style="--d:1; margin-top:22px; font-size:32px">Über 99 % der Objekte im Orbit sind kleiner als 10 cm und damit nicht dauerhaft verfolgbar</p>
+        <div class="bars">
+            <div class="bar-h rv" style="--d:2">Objektpopulation nach Größenklasse</div>
+            <div class="bar-row rv" style="--d:3"><div class="lbl">Über 10 cm</div><div class="track"><i class="cyan" style="--w:33%; --d:0"></i></div><div class="val cy">ca. 54.000<small>davon rund 40.000 katalogisiert und verfolgt</small></div></div>
+            <div class="bar-row rv" style="--d:4"><div class="lbl">1 bis 10 cm</div><div class="track"><i style="--w:59%; --d:1"></i></div><div class="val hot">ca. 1,2 Mio.</div></div>
+            <div class="bar-row rv" style="--d:5"><div class="lbl">1 mm bis 1 cm</div><div class="track"><i style="--w:98%; --d:2"></i></div><div class="val hot">ca. 130 Mio.</div></div>
+            <div class="footnote rv" style="--d:6">Balkenlänge logarithmisch skaliert</div>
+        </div>
+    </section>
+
+    <!-- === 06 MASSE === -->
+    <section class="slide" data-sec="01 · Definition &amp; Ausmaß" data-limb="90" data-dens="200">
+        <div class="eyebrow rv" style="--d:0">Der Orbit wird schwerer</div>
+        <div class="cols c2" style="margin-top:80px; gap:90px">
+            <div class="col rv" style="--d:1"><span class="num" data-fit="250" style="font-size:250px" data-count="13579" data-suf=" t">13.579 t</span><div class="lbl" style="margin-top:50px; font-size:60px">Masse im Orbit</div><p class="txt" style="font-size:34px">Zuwachs von über 2.200 Tonnen in einem Jahr</p></div>
+            <div class="col rv" style="--d:2"><span class="num hot" data-fit="250" style="font-size:250px" data-count="7400" data-pre="+">+7.400</span><div class="lbl" style="margin-top:50px; font-size:60px">Nettozuwachs 2024</div><p class="txt" style="font-size:34px">Neu katalogisierte Objekte</p></div>
+        </div>
+    </section>
+
+    <!-- === 07 MECHANISMEN === -->
+    <section class="slide" data-sec="02 · Entstehung &amp; Kaskade" data-limb="80" data-dens="160">
+        <h2 class="h2 s rv" style="--d:0">Drei Mechanismen erzeugen den Schrott – Explosionen, Kollisionen, Missionsabfall</h2>
+        <div class="cols c3" style="margin-top:80px">
+            <div class="col rv" style="--d:2"><div class="lbl" style="font-size:66px">Explosionen</div><div class="mono" style="margin-top:8px">(Fragmentierungsereignisse)</div><p class="txt" style="margin-top:22px">Resttreibstoff, Druckbehälter und Batterien in alten Oberstufen und Satelliten bersten</p><p class="txt">Historisch die häufigste Ursache</p><p class="txt">Durchschnittlich rund 10 nicht vorsätzliche Fragmentierungen pro Jahr</p></div>
+            <div class="col rv" style="--d:3"><div class="lbl" style="font-size:66px">Kollisionen</div><p class="txt" style="margin-top:22px">Aufprallgeschwindigkeit im Low Earth Orbit rund 7 bis 8 km/s</p><p class="txt">Ein Treffer zerlegt beide Objekte in tausende neue Fragmente</p></div>
+            <div class="col rv" style="--d:4"><div class="lbl" style="font-size:66px">Missionsbedingter Abfall</div><p class="txt" style="margin-top:22px">Abgesprengte Verkleidungen, Bolzen und Schlacke von Feststofftriebwerken</p></div>
+        </div>
+    </section>
+
+    <!-- === 08 KETTE === -->
+    <section class="slide" data-sec="02 · Entstehung &amp; Kaskade" data-limb="80" data-dens="150" data-burst="1560,560,2.4">
+        <div class="eyebrow rv" style="--d:0">Von einem Objekt zur Wolke</div>
+        <div class="chain">
+            <div class="node rv" style="--d:1"><span class="i">01</span><div class="lbl">Objekt im Orbit</div></div>
+            <div class="arr rv" style="--d:2"><svg viewBox="0 0 54 24"><path d="M0 12 H46 M38 4 L50 12 L38 20"/></svg></div>
+            <div class="node rv" style="--d:3"><span class="i">02</span><div class="lbl">Treibstoff, Batterie oder Aufprall</div></div>
+            <div class="arr rv" style="--d:4"><svg viewBox="0 0 54 24"><path d="M0 12 H46 M38 4 L50 12 L38 20"/></svg></div>
+            <div class="node rv" style="--d:5"><span class="i">03</span><div class="lbl">Fragmentierung</div></div>
+            <div class="arr rv" style="--d:6"><svg viewBox="0 0 54 24"><path d="M0 12 H46 M38 4 L50 12 L38 20"/></svg></div>
+            <div class="node hit rv" style="--d:7"><span class="i">04</span><div class="lbl hot">Trümmerwolke</div></div>
+        </div>
+        <div class="pin-bottom rv" style="--d:9"><span class="mono" style="font-size:24px"><em>Beispiel 2024:</em> mehrere große Fragmentierungen erzeugten über 3.000 neue Katalogobjekte</span></div>
+    </section>
+
+    <!-- === 09 EIN EREIGNIS === -->
+    <section class="slide" data-sec="02 · Entstehung &amp; Kaskade" data-limb="80" data-dens="180" data-burst="1600,300,0.9">
+        <h2 class="h2 m rv" style="--d:0; max-width:1500px">Ein einziges Ereignis erzeugt tausende neue Objekte</h2>
+        <p class="lead rv" style="--d:1; font-size:32px; margin-top:26px">Die Trümmerwolke verteilt sich entlang der Ursprungsbahn und erhöht dort die Trefferwahrscheinlichkeit für weitere Objekte</p>
+        <div class="cols c3" style="margin-top:36px">
+            <div class="col rv" style="--d:2"><span class="num" data-fit="130" style="font-size:130px" data-count="11">11</span><div class="lbl" style="margin-top:30px">Fragmentierungen in 2024</div><p class="txt" style="font-size:26px">Größere nicht kollisionale Ereignisse allein im Jahr 2024 – historisch über 660</p></div>
+            <div class="col rv" style="--d:3"><span class="num" data-fit="130" style="font-size:130px" data-count="700" data-pre="&gt;">&gt;700</span><div class="lbl" style="margin-top:30px">Trümmer aus einer Oberstufe</div><p class="txt" style="font-size:26px">Das Auseinanderbrechen einer Long-March-6A-Oberstufe im August 2024 erzeugte über 700 verfolgbare Teile</p></div>
+            <div class="col rv" style="--d:4"><span class="num hot" data-fit="130" style="font-size:130px" data-count="3000" data-pre="&gt;">&gt;3.000</span><div class="lbl" style="margin-top:30px">Neue Katalogobjekte</div><p class="txt" style="font-size:26px">Mehrere große Fragmentierungen erzeugten 2024 über 3.000 neue Objekte im Katalog</p></div>
+        </div>
+        <div class="pin-bottom rv" style="--d:6"><span class="mono"><em>Wirkung:</em> Jede Fragmentierung erhöht die Trefferwahrscheinlichkeit auf der betroffenen Bahn.</span></div>
+    </section>
+
+    <!-- === 10 HÖHENBAND === -->
+    <section class="slide s10" data-sec="02 · Entstehung &amp; Kaskade" data-limb="80" data-dens="100">
+        <div class="left">
+            <h2 class="h2 rv" style="--d:0; font-size:96px">In manchen Höhen wächst der Schrott auch ohne neue Starts</h2>
+            <p class="lead rv" style="--d:2">Zwischen 800 und 1.000 km erzeugen Kollisionen mehr Schrott, als die Atmosphäre entfernen kann</p>
+        </div>
+        <div class="alt rv" style="--d:2">
+            <div class="cap">Höhe über der Erde</div>
+            <div class="axis"></div>
+            <div class="tk" style="top:70px">1.200 km</div>
+            <div class="tk" style="top:230px">1.000 km</div>
+            <div class="tk" style="top:390px">800 km</div>
+            <div class="tk" style="top:550px">600 km</div>
+            <div class="tk" style="top:710px">400 km</div>
+            <div class="band"><b>800–1.000 km</b><span>Kollisionen &gt; Abbau</span></div>
+            <div class="ln"></div><div class="lnl">550 km: Konstellationen</div>
+        </div>
+    </section>
+
+    <!-- === 11 KESSLER === -->
+    <section class="slide" data-sec="02 · Entstehung &amp; Kaskade" data-limb="80" data-dens="240" data-burst="1500,250,1.2">
+        <div class="eyebrow rv" style="--d:0">Kettenreaktion</div>
+        <div class="kessler rv hot" data-fit="180" style="--d:1; font-size:180px">Kessler-Syndrom</div>
+        <p class="big-txt rv" style="--d:2; font-size:40px">Kettenreaktion, bei der Kollisionen neuen Schrott erzeugen, der wiederum Kollisionen auslöst</p>
+        <div class="cols c2" style="margin-top:56px; gap:90px">
+            <div class="col rv" style="--d:4"><div class="lbl">Prognose</div><p class="txt" style="font-size:33px">Selbst wenn alle Starts heute eingestellt würden, wächst die Population in diesen Höhen über <b>200 Jahre</b> weiter</p></div>
+            <div class="col rv" style="--d:5"><div class="lbl">Treiber</div><p class="txt" style="font-size:33px">2024 wuchs der Katalog trotz verbesserter Vermeidungskonzepte weiter</p></div>
+        </div>
+    </section>
+
+    <!-- === 12 GESCHWINDIGKEIT === -->
+    <section class="slide" data-sec="03 · Gefahren im Orbit" data-limb="80" data-dens="200">
+        <h2 class="h2 m rv" style="--d:0">Bei 7 bis 8 km/s wird jedes Fragment zum Geschoss</h2>
+        <p class="lead rv" style="--d:1; font-size:32px; margin-top:26px">Die Gefahr folgt nicht allein der Größe, sondern der Geschwindigkeit – ein Zentimeter großes Teil wirkt wie eine Handgranate</p>
+        <div class="cols c3" style="margin-top:40px; height:380px">
+            <div class="col rv" style="--d:2"><span class="num" data-fit="130" style="font-size:130px" data-count="130" data-suf=" Mio.">130 Mio.</span><div class="lbl" style="margin-top:26px">1 mm bis 1 cm</div><p class="txt">Können Subsysteme lahmlegen und Oberflächen erodieren</p><div class="meter"><i style="--w:30%"></i></div></div>
+            <div class="col rv" style="--d:3"><span class="num" data-fit="130" style="font-size:130px" data-count="1.2" data-dec="1" data-suf=" Mio.">1,2 Mio.</span><div class="lbl" style="margin-top:26px">1 bis 10 cm</div><p class="txt">Zu klein für die systematische Verfolgung, aber groß genug für katastrophale Schäden</p><div class="meter"><i style="--w:65%"></i></div></div>
+            <div class="col rv" style="--d:4"><span class="num hot" data-fit="130" style="font-size:130px" data-count="54000" data-pre="~">~54.000</span><div class="lbl" style="margin-top:26px">Über 10 cm</div><p class="txt">Verfolgbar – ein Ausweichen ist möglich, aber nicht garantiert</p><div class="meter"><i style="--w:100%"></i></div></div>
+        </div>
+        <div class="pin-bottom rv" style="--d:6"><div class="footnote" style="margin:0">Balkenintensität = Schadenswirkung (nimmt mit der Größe zu)</div><div class="footnote" style="margin-top:8px"><span style="color:var(--signal)">Betroffene Systeme:</span> Kommunikation, Navigation, Wetter- und Erdbeobachtung</div></div>
+    </section>
+
+    <!-- === 13 AUSWEICHMANÖVER === -->
+    <section class="slide" data-sec="03 · Gefahren im Orbit" data-limb="90" data-dens="220">
+        <h2 class="h2 m rv" style="--d:0">Ausweichmanöver sind vom Ausnahmefall zur Routine geworden</h2>
+        <p class="lead rv" style="--d:1; font-size:32px; margin-top:26px">Die Zahl der Manöver zeigt, wie eng der Orbit bereits geworden ist</p>
+        <div class="cols c2" style="margin-top:80px; gap:90px">
+            <div class="col rv" style="--d:2"><span class="num hot" data-fit="220" style="font-size:220px" data-count="200000" data-pre="~">~200.000</span><div class="lbl" style="margin-top:30px; font-size:50px">Starlink – Manöver 2024</div><p class="txt" style="font-size:32px">Im Schnitt etwa 548 pro Tag, Tendenz steigend auf über 1.000 pro Tag</p></div>
+            <div class="col rv" style="--d:3"><span class="num" data-fit="220" style="font-size:220px">12–15</span><div class="lbl" style="margin-top:30px; font-size:50px">ESA-Flotte – Manöver pro Jahr</div><p class="txt" style="font-size:32px">Etwa ein Manöver pro Satellit und Jahr</p></div>
+        </div>
+    </section>
+
+    <!-- === 14 SCHWELLEN === -->
+    <section class="slide" data-sec="03 · Gefahren im Orbit" data-limb="90" data-dens="170">
+        <div class="eyebrow rv" style="--d:0">Schwellen und Warnlage</div>
+        <div class="cols c3" style="margin-top:90px">
+            <div class="col rv" style="--d:1"><span class="num" data-fit="150" style="font-size:150px">1 : 10.000</span><div class="lbl" style="margin-top:36px">ESA-Schwelle</div><p class="txt">Manöver ab einer Kollisionswahrscheinlichkeit von 1 zu 10.000</p></div>
+            <div class="col rv" style="--d:2"><span class="num hot" data-fit="150" style="font-size:150px">1 : 1.000.000</span><div class="lbl" style="margin-top:36px">Starlink-Schwelle</div><p class="txt">Manöver bereits ab 1 zu 1.000.000</p></div>
+            <div class="col rv" style="--d:3"><span class="num" data-fit="150" style="font-size:150px">~2 / Woche</span><div class="lbl" style="margin-top:36px">Warnlage</div><p class="txt">Etwa zwei Hochrisiko-Warnungen pro ESA-Satellit und Woche</p></div>
+        </div>
+    </section>
+
+    <!-- === 15 VERMEIDEN / ÜBERWACHEN / AUSWEICHEN === -->
+    <section class="slide" data-sec="04 · Gegenmaßnahmen" data-limb="80" data-dens="150">
+        <h2 class="h2 m rv" style="--d:0">Vermeiden und überwachen wirkt – reicht aber nicht</h2>
+        <p class="lead rv" style="--d:1; font-size:32px; margin-top:24px">Entsorgungsquoten steigen, doch die Zufuhr neuer Objekte wächst schneller</p>
+        <div class="cols c3" style="margin-top:56px">
+            <div class="col rv" style="--d:2"><div class="lbl hot" style="font-size:54px">1 · Vermeiden</div><p class="txt" style="font-size:27px">Zero-Debris-Politik der ESA: Missionen sollen den Orbit nach dem Lebensende aktiv oder passiv verlassen, Ziel bis 2030. Rund 90 % der Raketenoberstufen im LEO erfüllen heute die End-of-Life-Vorgaben.</p></div>
+            <div class="col rv" style="--d:3"><div class="lbl hot" style="font-size:54px">2 · Überwachen</div><p class="txt" style="font-size:27px">Kataloge erfassen rund 40.000 Objekte, doch rund 14.000 Objekte über 10 cm werden nicht regelmäßig verfolgt.</p></div>
+            <div class="col rv" style="--d:4"><div class="lbl hot" style="font-size:54px">3 · Ausweichen</div><p class="txt" style="font-size:27px">Aus Überwachungsdaten entstehen Warnungen und Manöver – inzwischen Routine statt Ausnahme.</p></div>
+        </div>
+        <div class="pin-bottom rv" style="--d:6"><span class="mono"><em>Grenze der Vermeidung:</em> Regeln verhindern neuen Schrott, beseitigen aber keinen bestehenden.</span></div>
+    </section>
+
+    <!-- === 16 ADR + CLEARSPACE === -->
+    <section class="slide" data-sec="04 · Gegenmaßnahmen" data-limb="80" data-dens="110">
+        <h2 class="h2 m rv" style="--d:0">Ohne aktives Entfernen bleibt die Bilanz negativ</h2>
+        <p class="lead rv" style="--d:1; font-size:32px; margin-top:24px">Bergung ist die einzige Maßnahme, die bestehende Objekte dauerhaft aus dem Orbit holt</p>
+        <div class="cols c2" style="margin-top:80px; gap:90px">
+            <div class="col rv" style="--d:2"><div class="lbl" style="font-size:72px">Active Debris Removal</div><p class="txt" style="font-size:36px; margin-top:24px">Gezieltes Abschleppen großer Schrottobjekte aus überfüllten Höhenbändern</p></div>
+            <div class="col rv" style="--d:3"><div class="lbl hot" style="font-size:72px">ClearSpace-1</div><p class="txt" style="font-size:36px; margin-top:24px">Erste ESA-Mission zur Bergung eines großen Objekts – der Start ist inzwischen für <b>2028</b> geplant</p></div>
+        </div>
+    </section>
+
+    <!-- === 17 PRIORISIERUNG / OFFENE PUNKTE === -->
+    <section class="slide" data-sec="04 · Gegenmaßnahmen" data-limb="80" data-dens="110">
+        <div class="eyebrow rv" style="--d:0">Bergung im Detail</div>
+        <div class="cols c2" style="margin-top:60px; gap:90px">
+            <div class="col rv" style="--d:1"><div class="lbl" style="font-size:96px">Priorisierung</div><p class="txt" style="font-size:40px; margin-top:34px; color:var(--ink)">Große Objekte zuerst, weil eine fragmentierende Oberstufe hunderte bis tausende neue Teile erzeugt</p></div>
+            <div class="col rv" style="--d:2"><div class="lbl hot" style="font-size:96px">Offene Punkte</div><p class="txt" style="font-size:40px; margin-top:34px; color:var(--ink)">Finanzierung, Haftung und Verantwortlichkeit für Objekte, die niemandem mehr gehören</p></div>
+        </div>
+    </section>
+
+    <!-- === 18 DANK === -->
+    <section class="slide s-title" data-sec="" data-limb="270" data-dens="190">
+        <div class="block" style="top:330px">
+            <h1 data-fit="200" style="font-size:200px">Vielen Dank</h1>
+            <p class="sub rv" style="--d:5; max-width:1300px">Weltraumschrott entsteht durch Explosionen, Kollisionen und Missionsabfall – und nimmt ohne aktives Entfernen weiter zu.</p>
+        </div>
+    </section>
+
+</main>
+</div>
+
+<!-- Steuerung außerhalb der Bühne (Touch / Maus) -->
+<div class="deck-controls"><button id="prev" aria-label="Zurück">←</button><button id="next" aria-label="Weiter">→</button></div>
+
+<!-- Bearbeitungsmodus -->
+<div class="edit-hotzone"></div>
+<button class="edit-toggle" id="editToggle" title="Bearbeiten (E)">Bearbeiten · E</button>
+
+<script>
+/* ===========================================
+   ORBIT-HINTERGRUND (Canvas)
+   Erdhorizont am unteren Rand, Sterne, kreisende Objekte.
+   Pro Folie: data-limb (Höhe des Horizonts), data-dens (Objektzahl),
+   data-burst="x,y,Verzögerung" (Trümmerwolke).
+   =========================================== */
+class OrbitScene {
+    constructor(canvas) {
+        this.c = canvas;
+        this.ctx = canvas.getContext('2d');
+        this.W = 1920; this.H = 1080;
+        this.R = 2600;
+        this.limb = 270; this.limbT = 270;
+        this.dens = 190; this.densT = 190;
+        this.reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const r = Math.min(2, window.devicePixelRatio || 1);
+        canvas.width = this.W * r; canvas.height = this.H * r;
+        this.ctx.setTransform(r, 0, 0, r, 0, 0);
+        this.stars = Array.from({ length: 260 }, () => ({ x: Math.random() * 1920, y: Math.random() * 1080, s: Math.random() * 1.6 + 0.3, a: Math.random() * 0.5 + 0.12, p: Math.random() * 6.28 }));
+        this.parts = Array.from({ length: 640 }, (_, i) => ({
+            alt: 40 + Math.pow(Math.random(), 1.7) * 880,
+            a: -Math.PI / 2 + (Math.random() - 0.5) * 1.5,
+            size: Math.random() < 0.08 ? 3 : Math.random() * 1.6 + 0.8,
+            hot: Math.random() < 0.22, alpha: 0, rank: i
+        }));
+        this.frags = [];
+        this.last = performance.now();
+        this.t = 0;
+        if (this.reduced) { this.draw(0); } else { requestAnimationFrame(n => this.loop(n)); }
+    }
+    set(limb, dens) { this.limbT = limb; this.densT = dens; if (this.reduced) { this.limb = limb; this.dens = dens; this.draw(0); } }
+    burst(x, y) {
+        for (let i = 0; i < 150; i++) {
+            const ang = Math.random() * 6.283, sp = 60 + Math.pow(Math.random(), 0.6) * 420;
+            this.frags.push({ x, y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, life: 1, hot: Math.random() < 0.7, s: Math.random() * 2.2 + 0.8 });
+        }
+        if (this.reduced) this.draw(0);
+    }
+    loop(now) {
+        const dt = Math.min(0.05, (now - this.last) / 1000); this.last = now; this.t += dt;
+        this.draw(dt);
+        requestAnimationFrame(n => this.loop(n));
+    }
+    draw(dt) {
+        const ctx = this.ctx, W = this.W, H = this.H, R = this.R;
+        this.limb += (this.limbT - this.limb) * Math.min(1, dt * 2.2);
+        this.dens += (this.densT - this.dens) * Math.min(1, dt * 2.2);
+        const cx = W / 2, cy = H + R - this.limb;
+        ctx.clearRect(0, 0, W, H);
+
+        // Sterne
+        for (const s of this.stars) {
+            const tw = this.reduced ? 1 : 0.65 + 0.35 * Math.sin(this.t * 1.3 + s.p);
+            ctx.fillStyle = `rgba(220,235,245,${s.a * tw})`;
+            ctx.fillRect(s.x, s.y, s.s, s.s);
+        }
+
+        // Erdkörper + Atmosphärenrand
+        const body = ctx.createRadialGradient(cx, cy, R - 380, cx, cy, R);
+        body.addColorStop(0, '#03060a'); body.addColorStop(1, '#0b1c2b');
+        ctx.fillStyle = body; ctx.beginPath(); ctx.arc(cx, cy, R, 0, 6.2832); ctx.fill();
+        const rim = ctx.createRadialGradient(cx, cy, R - 6, cx, cy, R + 150);
+        rim.addColorStop(0, 'rgba(170,235,255,0.95)'); rim.addColorStop(0.04, 'rgba(90,185,225,0.38)');
+        rim.addColorStop(0.35, 'rgba(40,110,160,0.10)'); rim.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = rim; ctx.beginPath(); ctx.arc(cx, cy, R + 150, 0, 6.2832); ctx.fill();
+        // Warmer Glanzpunkt rechts (Sonnenaufgang-Andeutung)
+        const gl = ctx.createRadialGradient(cx + 1050, cy - R + 6, 0, cx + 1050, cy - R + 6, 520);
+        gl.addColorStop(0, 'rgba(255,140,70,0.20)'); gl.addColorStop(1, 'rgba(255,106,43,0)');
+        ctx.fillStyle = gl; ctx.fillRect(cx + 400, cy - R - 300, 1400, 600);
+
+        // Kreisende Objekte
+        const n = Math.round(this.dens);
+        for (const p of this.parts) {
+            const target = p.rank < n ? 1 : 0;
+            p.alpha += (target - p.alpha) * Math.min(1, dt * 2);
+            if (p.alpha < 0.01 && target === 0) continue;
+            const r = R + p.alt;
+            p.a += 0.0148 * Math.pow((R + 100) / r, 1.5) * dt * 1.0;
+            if (p.a > -Math.PI / 2 + 0.85) p.a -= 1.7;
+            const x = cx + r * Math.cos(p.a), y = cy + r * Math.sin(p.a);
+            if (x < -20 || x > W + 20 || y < -20 || y > H + 20) continue;
+            const a = p.alpha * (p.hot ? 0.95 : 0.7);
+            ctx.fillStyle = p.hot ? `rgba(255,120,60,${a})` : `rgba(205,235,245,${a})`;
+            ctx.fillRect(x, y, p.size, p.size);
+            if (p.size > 2.5) { ctx.strokeStyle = `rgba(255,120,60,${a * 0.35})`; ctx.strokeRect(x - 5, y - 5, p.size + 10, p.size + 10); }
+        }
+
+        // Trümmerwolke
+        for (let i = this.frags.length - 1; i >= 0; i--) {
+            const f = this.frags[i];
+            const px = f.x, py = f.y;
+            f.x += f.vx * dt; f.y += f.vy * dt;
+            const drag = Math.pow(0.35, dt); f.vx *= drag; f.vy *= drag;
+            f.life -= dt * 0.16;
+            if (f.life <= 0) { this.frags.splice(i, 1); continue; }
+            ctx.strokeStyle = f.hot ? `rgba(255,130,70,${f.life * 0.9})` : `rgba(215,240,250,${f.life * 0.8})`;
+            ctx.lineWidth = f.s * 0.8; ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(f.x, f.y); ctx.stroke();
+        }
+        ctx.lineWidth = 1;
+    }
+}
+
+/* ===========================================
+   PRÄSENTATIONS-STEUERUNG
+   =========================================== */
+class SlidePresentation {
+    constructor() {
+        this.slides = Array.from(document.querySelectorAll('.slide'));
+        this.stage = document.getElementById('deckStage');
+        this.scene = new OrbitScene(document.getElementById('orbit'));
+        this.cur = -1;
+        this.timers = [];
+        this.setupScale(); this.setupKeys(); this.setupTouch(); this.setupWheel(); this.setupButtons();
+        document.getElementById('hudTot').textContent = String(this.slides.length).padStart(2, '0');
+        const start = parseInt(location.hash.slice(1), 10);
+        this.show(Number.isFinite(start) ? start - 1 : 0);
+        if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => this.fit());
+    }
+    /* Bühne einheitlich auf das Fenster skalieren (Letterbox, kein Umbruch) */
+    setupScale() {
+        const f = () => {
+            const k = Math.min(innerWidth / 1920, innerHeight / 1080);
+            this.stage.style.transform = `translate(${(innerWidth - 1920 * k) / 2}px, ${(innerHeight - 1080 * k) / 2}px) scale(${k})`;
+        };
+        f(); addEventListener('resize', f);
+    }
+    /* Große Zahlen verkleinern, falls sie die Spalte sprengen (z. B. wenn die Webfont fehlt) */
+    fit() {
+        document.querySelectorAll('[data-fit]').forEach(el => {
+            el.style.fontSize = el.dataset.fit + 'px';
+            const cs = getComputedStyle(el.parentElement);
+            const avail = el.parentElement.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+            // Titel: mit endgültigem Buchstabenabstand messen (Intro-Animation ignorieren)
+            const h1 = el.tagName === 'H1';
+            if (h1) { el.style.transition = 'none'; el.style.letterSpacing = '0.012em'; }
+            const w = el.scrollWidth;
+            if (h1) { void el.offsetWidth; el.style.letterSpacing = ''; requestAnimationFrame(() => el.style.transition = ''); }
+            if (w > avail) el.style.fontSize = Math.floor(el.dataset.fit * avail / w) + 'px';
+        });
+        // Zahlen in einer Reihe bekommen dieselbe Größe (die kleinste passende)
+        document.querySelectorAll('.cols').forEach(row => {
+            const nums = Array.from(row.querySelectorAll('.num[data-fit]'));
+            if (nums.length < 2) return;
+            const min = Math.min(...nums.map(n => parseFloat(n.style.fontSize)));
+            nums.forEach(n => n.style.fontSize = min + 'px');
+        });
+    }
+    setupKeys() {
+        addEventListener('keydown', e => {
+            if (e.target.isContentEditable) return;
+            const k = e.key;
+            if (['ArrowRight', 'ArrowDown', 'PageDown', ' ', 'Enter'].includes(k)) { e.preventDefault(); this.show(this.cur + 1); }
+            else if (['ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace'].includes(k)) { e.preventDefault(); this.show(this.cur - 1); }
+            else if (k === 'Home') this.show(0);
+            else if (k === 'End') this.show(this.slides.length - 1);
+            else if (k === 'f' || k === 'F') { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.(); }
+        });
+    }
+    setupTouch() {
+        let x0 = null, y0 = null;
+        addEventListener('touchstart', e => { x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; }, { passive: true });
+        addEventListener('touchend', e => {
+            if (x0 === null) return;
+            const dx = e.changedTouches[0].clientX - x0, dy = e.changedTouches[0].clientY - y0;
+            if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) this.show(this.cur + (dx < 0 ? 1 : -1));
+            x0 = null;
+        });
+    }
+    setupWheel() {
+        let lock = false;
+        addEventListener('wheel', e => {
+            if (lock || Math.abs(e.deltaY) < 30) return;
+            lock = true; setTimeout(() => lock = false, 800);
+            this.show(this.cur + (e.deltaY > 0 ? 1 : -1));
+        }, { passive: true });
+    }
+    setupButtons() {
+        document.getElementById('prev').onclick = () => this.show(this.cur - 1);
+        document.getElementById('next').onclick = () => this.show(this.cur + 1);
+    }
+    /* Zahlen hochzählen (de-DE Format), am Ende steht wieder der Originaltext */
+    countUp(slide) {
+        slide.querySelectorAll('[data-count]').forEach(el => {
+            if (!el.dataset.final) el.dataset.final = el.textContent;
+            if (document.body.classList.contains('editing') || this.scene.reduced) { el.textContent = el.dataset.final; return; }
+            const v = parseFloat(el.dataset.count), dec = parseInt(el.dataset.dec || '0', 10);
+            const pre = el.dataset.pre || '', suf = el.dataset.suf || '';
+            const t0 = performance.now() + 450, dur = 1700;
+            const tick = now => {
+                if (el.closest('.slide') !== this.slides[this.cur]) { el.textContent = el.dataset.final; return; }
+                const p = Math.max(0, Math.min(1, (now - t0) / dur)), e = 1 - Math.pow(1 - p, 4);
+                if (p >= 1) { el.textContent = el.dataset.final; return; }
+                el.textContent = pre + (v * e).toLocaleString('de-DE', { minimumFractionDigits: dec, maximumFractionDigits: dec }) + suf;
+                requestAnimationFrame(tick);
+            };
+            requestAnimationFrame(tick);
+        });
+    }
+    show(i) {
+        i = Math.max(0, Math.min(i, this.slides.length - 1));
+        if (i === this.cur) return;
+        this.timers.forEach(clearTimeout); this.timers = [];
+        this.cur = i;
+        this.slides.forEach((s, j) => { s.classList.toggle('active', j === i); s.classList.toggle('visible', j === i); });
+        const s = this.slides[i];
+        this.scene.set(+s.dataset.limb || 90, +s.dataset.dens || 150);
+        if (s.dataset.burst) { const [x, y, d] = s.dataset.burst.split(',').map(Number); this.timers.push(setTimeout(() => this.scene.burst(x, y), d * 1000)); }
+        this.countUp(s);
+        this.fit();
+        // HUD
+        const sec = document.getElementById('hudSec'); sec.textContent = s.dataset.sec ? '/ ' + s.dataset.sec : '';
+        document.getElementById('hudCur').textContent = String(i + 1).padStart(2, '0');
+        document.getElementById('hudProg').style.width = ((i + 1) / this.slides.length * 100) + '%';
+        history.replaceState(null, '', '#' + (i + 1));
+    }
+}
+const deck = new SlidePresentation();
+
+/* ===========================================
+   BEARBEITUNGSMODUS
+   E oder Klick auf die obere linke Ecke → Texte direkt anklicken und ändern.
+   Strg/Cmd+S speichert die geänderte Datei als HTML-Download.
+   =========================================== */
+const editor = {
+    on: false,
+    sel: '.slide h1, .slide h2, .slide p, .slide .lbl, .slide .num, .slide .mono, .slide .eyebrow, .slide .band b, .slide .band span',
+    toggle() {
+        this.on = !this.on;
+        document.body.classList.toggle('editing', this.on);
+        document.getElementById('editToggle').classList.toggle('active', this.on);
+        document.querySelectorAll('[data-count]').forEach(el => { if (el.dataset.final) el.textContent = el.dataset.final; });
+        document.querySelectorAll(this.sel).forEach(el => this.on ? el.setAttribute('contenteditable', 'true') : el.removeAttribute('contenteditable'));
+        if (!this.on) document.querySelectorAll('[data-count]').forEach(el => { el.dataset.final = el.textContent; });
+    },
+    save() {
+        const wasOn = this.on; if (wasOn) this.toggle();
+        const html = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+        a.download = 'weltraumschrott.html'; a.click();
+        if (wasOn) this.toggle();
+    }
+};
+(() => {
+    const hz = document.querySelector('.edit-hotzone'), tg = document.getElementById('editToggle');
+    let hide = null;
+    const out = () => { hide = setTimeout(() => { if (!editor.on) tg.classList.remove('show'); }, 400); };
+    hz.addEventListener('mouseenter', () => { clearTimeout(hide); tg.classList.add('show'); });
+    hz.addEventListener('mouseleave', out);
+    tg.addEventListener('mouseenter', () => clearTimeout(hide));
+    tg.addEventListener('mouseleave', out);
+    tg.addEventListener('click', () => editor.toggle());
+    hz.addEventListener('click', () => editor.toggle());
+    addEventListener('keydown', e => {
+        if ((e.key === 'e' || e.key === 'E') && !e.target.isContentEditable && !e.ctrlKey && !e.metaKey) editor.toggle();
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); editor.save(); }
+    });
+})();
+</script>
+</body>
+</html>
